@@ -50,7 +50,7 @@ pub fn update_owner(
     let address = Addr::to_string(&new_owner);
     let checked: Addr = deps.api.addr_validate(&address)?;
     if checked != address {
-        return Err(ContractError::AddressInvalid{})
+        return Err(ContractError::AddressInvalid {});
     }
 
     STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
