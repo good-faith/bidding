@@ -1,5 +1,5 @@
 [package]
-name = "cw_sc101"
+name = "bidding"
 version = "0.1.0"
 authors = ["GoodFaithParadigm8 <jason.a.sprouse@gmail.com>"]
 edition = "2021"
