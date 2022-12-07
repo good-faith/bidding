@@ -78,9 +78,9 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
 
         let mut total_amount = state.highest_bid.total_amount.fund[0].amount.u128();
         let mut commission = total_amount * COMMISSION / 100;
-;       let mut amount = total_amount - commission;
+        let mut amount = total_amount - commission;
 
-        let mut current_bid = Bid {
+        let current_bid = Bid {
             fund: coins(amount, BID_DENOM),
         };
 
@@ -90,6 +90,18 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
                 fund: coins(amount, BID_DENOM),
             },
             transfer_addr: None,
+        };
+
+        let mut state = State {
+            highest_bid: Bidder {
+                sender: info.sender,
+                total_amount: Bid {
+                    fund: coins(amount, BID_DENOM),
+                },
+                transfer_addr: None,
+            },
+            owner: info.sender,
+            closed_bidding: false,
         };
        
 
@@ -116,27 +128,30 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
         fund: info.funds
     };
 
-    let mut commission = new_bid.fund[0].amount * COMMISSION / 100;
-    let mut amount = new_bid.fund[0].amount - commission;
-    
-
-    let highest_bidder = amount + current_bidder.clone().unwrap().total_amount.fund[0].amount;
-    if highest_bidder < state.highest_bid.total_amount.fund[0].amount {
+    let mut commission = new_bid.fund[0].amount.u128() * COMMISSION / 100;
+    let mut amount = new_bid.fund[0].amount.u128() - commission;
+   
+    let highest_bidder = amount + current_bidder.clone().unwrap().total_amount.fund[0].amount.u128();
+    if highest_bidder < state.highest_bid.total_amount.fund[0].amount.u128() {
         return Err(ContractError::BidTooLow {});
     }
+
+    let amount = coins(amount, BID_DENOM);
+    let highest_bidder  = coins(highest_bidder, BID_DENOM);
+    
     
 
     let mut current_bidder = Bidder {
         sender: info.sender,
         total_amount: Bid {
-            fund: highest_bidder
+            fund: amount,
         },
         transfer_addr: None,
     };
 
     let mut state = State {
         highest_bid: Bidder {
-            sender: info.sender,
+            sender: info.sender,    
             total_amount: Bid {
                 fund: highest_bidder
             },
@@ -151,7 +166,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
 
     let bank_msg = BankMsg::Send {
         to_address: state.owner.to_string(),
-        amount: coins(commission.u128(), BID_DENOM),
+        amount: coins(commission, BID_DENOM),
     };
 
     Ok(Response::new().add_attribute("method", "submit_bid"))
@@ -167,7 +182,7 @@ pub fn close_bidding(deps: DepsMut, info: MessageInfo) -> Result<Response, Contr
 
     let bank_msg = BankMsg::Send {
         to_address: state.owner.to_string(),
-        amount: coins(, BID_DENOM),
+        amount: coins(state.highest_bid.total_amount.fund[0].amount.u128(), BID_DENOM),
     };
 
     STATE.save(deps.storage, &state)?;
