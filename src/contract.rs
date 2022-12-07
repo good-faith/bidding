@@ -119,8 +119,8 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
     let mut amount = new_bid.fund[0].amount - commission;
     
 
-    let highest_bid = amount + current_bidder.total_amount.fund[0].amount;
-    if highest_bid < state.highest_bid.total_amount.fund[0].amount {
+    let highest_bidder = amount + current_bidder.total_amount.fund[0].amount;
+    if highest_bidder < state.highest_bid.total_amount.fund[0].amount {
         return Err(ContractError::BidTooLow {});
     }
     
@@ -128,7 +128,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
     let mut current_bidder = Bidder {
         sender: info.sender,
         total_amount: Bid {
-            fund: highest_bid
+            fund: highest_bidder
         },
         transfer_addr: None,
     };
@@ -137,7 +137,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
         highest_bid: Bidder {
             sender: info.sender,
             total_amount: Bid {
-                fund: highest_bid
+                fund: highest_bidder
             },
             transfer_addr: None,
         },
