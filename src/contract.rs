@@ -3,6 +3,7 @@ use cosmwasm_std::{entry_point, coins};
 use cosmwasm_std::{Addr, Coin, Storage, Uint128, BankMsg};
 use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
 use std::ops::{Sub, Add};
+use std::sync::Mutex;
 use cw_storage_plus::{Item, Map};
 
 use crate::error::ContractError;
@@ -51,7 +52,7 @@ pub fn execute(
     match msg {
         ExecuteMsg::Bid {} => submit_bid(deps, info),
         ExecuteMsg::CloseBidding {} => close_bidding(deps, info),
-        Retract { reciever: Option<Addr> } => retract_bid(deps, info, reciever),
+        Retract { reciever: Option::<Addr> } => retract_bid(deps, info, reciever),
     }
 }
 
@@ -110,7 +111,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
     let current_bidder = info.sender;
     let current_bidder = BIDDER.may_load(deps.storage)?;
 
-    current_bidder.iter().map(|bidder| bidder.sender == info.sender).cloned();
+    current_bidder.iter().map(|bidder| bidder.sender == info.sender).collect();
     let new_bid = Bid {
         fund: info.funds
     };
@@ -119,7 +120,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
     let mut amount = new_bid.fund[0].amount - commission;
     
 
-    let highest_bidder = amount + current_bidder.total_amount.fund[0].amount;
+    let highest_bidder = amount + current_bidder.clone().unwrap().total_amount.fund[0].amount;
     if highest_bidder < state.highest_bid.total_amount.fund[0].amount {
         return Err(ContractError::BidTooLow {});
     }
@@ -155,7 +156,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
 
     Ok(Response::new().add_attribute("method", "submit_bid"))
 }
-    
+
 
 pub fn close_bidding(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
     let mut state = STATE.load(deps.storage)?;
@@ -163,16 +164,22 @@ pub fn close_bidding(deps: DepsMut, info: MessageInfo) -> Result<Response, Contr
         return Err(ContractError::Unauthorized {});
     }
     state.closed_bidding = true;
+
+    let bank_msg = BankMsg::Send {
+        to_address: state.owner.to_string(),
+        amount: coins(, BID_DENOM),
+    };
+
     STATE.save(deps.storage, &state)?;
 
-    let bank
+   
     Ok(Response::new().add_attribute("method", "close_bidding"))
 }
 
 pub fn retract_bid(deps: DepsMut, info: MessageInfo, reciever: Option<Addr>) -> Result<Response, ContractError> {
     let mut state = STATE.load(deps.storage)?;
     
-    if state.highest_bid.sender != info.sender {
+    info.sender {
         return Err(ContractError::Unauthorized {});
     }
     let mut current_bidder = BIDDER.load(deps.storage)?;
