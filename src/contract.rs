@@ -1,12 +1,19 @@
 #[cfg(not(feature = "library"))]
-use crate::msg::OwnerResponse;
-use cosmwasm_std::{entry_point};
-use cosmwasm_std::{Addr, Coin};
+use cosmwasm_std::{entry_point, coins};
+use cosmwasm_std::{Addr, Coin, Storage, Uint128, BankMsg};
 use cosmwasm_std::{to_binary, Binary, Deps, DepsMut, Env, MessageInfo, Response, StdResult};
+use std::ops::{Sub, Add};
+use cw_storage_plus::{Item, Map};
 
 use crate::error::ContractError;
-use crate::msg::{CountResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
-use crate::state::{STATE, State, Bidder, Bid};
+use crate::msg::{HighestBidResponse, HighestBidderResponse, GetOwnerResponse, GetIsBiddingClosedResponse, ExecuteMsg, InstantiateMsg, QueryMsg};
+use crate::state::{STATE, State, Bid, BIDDER, Bidder};
+
+use cw2::{set_contract_version};
+const CONTRACT_NAME: &str = env!("CARGO_PKG_NAME");
+const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const COMMISSION : u128 = 10;
+const BID_DENOM : &str = "uatom";
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -15,30 +22,23 @@ pub fn instantiate(
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
+    set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
 
-    let sender = Addr::unchecked("sender");
-    let funds: Bid = Bid {
-        amount: Coin::new(0, "atom"),
-    };
-
-    let state = &State {
-    
-
-       highest_bid: Bidder { 
-            sender: sender,
-            total_bid: funds,
-            transfer_addr: Some(sender), 
-    },
-        owner: info.sender.clone(),
+    let state = State {
+        highest_bid: Bidder {
+            sender: info.sender,
+            total_amount: Bid {
+                fund: coins(0, "uatom"),
+            },
+            transfer_addr: None,
+        },
+        owner: info.sender,
         closed_bidding: false,
     };
-
     STATE.save(deps.storage, &state)?;
-
-    Ok(Response::new()
-        .add_attribute("method", "instantiate")
-        .add_attribute("owner", info.sender)
-    )
+    Ok(Response::new().add_attribute("method", "instantiate")
+        .add_attribute("owner", info.sender.to_string())
+        .add_attribute("highest_bid", state.highest_bid.sender.to_string()))
 }
 
 #[cfg_attr(not(feature = "library"), entry_point)]
@@ -49,60 +49,145 @@ pub fn execute(
     msg: ExecuteMsg,
 ) -> Result<Response, ContractError> {
     match msg {
-        ExecuteMsg::Increment {} => try_increment(deps),
-        ExecuteMsg::NewOwner { new_owner } => update_owner(deps, info, new_owner),
-        ExecuteMsg::Reset { count } => try_reset(deps, info, count),
+        ExecuteMsg::Bid {} => submit_bid(deps, info),
+        ExecuteMsg::CloseBidding {} => close_bidding(deps, info),
+        Retract { reciever: Option<Addr> } => retract_bid(deps, info, reciever),
     }
 }
 
-pub fn update_owner(
-    deps: DepsMut,
-    info: MessageInfo,
-    new_owner: Addr,
-) -> Result<Response, ContractError> {
-    let address = Addr::to_string(&new_owner);
-    let checked: Addr = deps.api.addr_validate(&address)?;
-    if checked != address {
-        return Err(ContractError::AddressInvalid {});
+pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+  
+    if state.closed_bidding {
+        return Err(ContractError::BiddingClosed {});
     }
 
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        // let mut _mutable = Addr::to_string(&info.sender);
+    if info.sender == state.owner {
+        return Err(ContractError::Unauthorized {});
+    }
 
-        if info.sender != state.owner {
-            return Err(ContractError::Unauthorized {});
-        }
-        if info.sender == new_owner {
-            return Err(ContractError::AlreadyOwner {});
-        }
 
-        let owner = Addr::unchecked(new_owner);
-        state.owner = owner;
-        Ok(state)
-    })?;
+    if state.highest_bid.total_amount.fund.is_empty() {
+        let mut current_bidder = info.sender;
+        let mut current_bidder = BIDDER.load(deps.storage)?;
+        
+        state.highest_bid.total_amount.fund = current_bidder.total_amount.fund;
+        state.highest_bid.sender = current_bidder.sender;
+        state.highest_bid.transfer_addr = None;
 
-    Ok(Response::new().add_attribute("method", "update_owner"))
+        let mut total_amount = state.highest_bid.total_amount.fund;
+        let mut commission = total_amount * COMMISSION / 100;
+;       let mut amount = total_amount - commission;
+
+        let mut current_bid = Bid {
+            fund: coins(amount, BID_DENOM),
+        };
+
+        let mut current_bidder = Bidder {
+            sender: info.sender,
+            total_amount: Bid {
+                fund: coins(amount, BID_DENOM),
+            },
+            transfer_addr: None,
+        };
+       
+
+        BIDDER.save(deps.storage, &current_bidder)?;
+        STATE.save(deps.storage, &state)?;
+
+        let bank_msg = BankMsg::Send {
+            to_address: state.owner.to_string(),
+            amount: coins(commission.u128(), BID_DENOM),
+        };
+
+        return Ok(Response::new().add_attribute("method", "submit_bid"))
+    }
+    
+    if info.sender == state.highest_bid.sender {
+        return Err(ContractError::AlreadyHighestBidder{});
+    }
+
+    let current_bidder = info.sender;
+    let current_bidder = BIDDER.may_load(deps.storage)?;
+
+    current_bidder.iter().map(|bidder| bidder.sender == info.sender).cloned();
+    let new_bid = Bid {
+        fund: info.funds
+    };
+
+    let mut commission = new_bid.fund[0].amount * COMMISSION / 100;
+    let mut amount = new_bid.fund[0].amount - commission;
+    
+
+    let highest_bid = amount + current_bidder.total_amount.fund[0].amount;
+    if highest_bid < state.highest_bid.total_amount.fund[0].amount {
+        return Err(ContractError::BidTooLow {});
+    }
+    
+
+    let mut current_bidder = Bidder {
+        sender: info.sender,
+        total_amount: Bid {
+            fund: highest_bid
+        },
+        transfer_addr: None,
+    };
+
+    let mut state = State {
+        highest_bid: Bidder {
+            sender: info.sender,
+            total_amount: Bid {
+                fund: highest_bid
+            },
+            transfer_addr: None,
+        },
+        owner: info.sender,
+        closed_bidding: false,
+    };
+
+    BIDDER.save(deps.storage, &current_bidder)?;
+    STATE.save(deps.storage, &state)?;
+
+    let bank_msg = BankMsg::Send {
+        to_address: state.owner.to_string(),
+        amount: coins(commission.u128(), BID_DENOM),
+    };
+
+    Ok(Response::new().add_attribute("method", "submit_bid"))
+}
+    
+
+pub fn close_bidding(deps: DepsMut, info: MessageInfo) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    if state.owner != info.sender {
+        return Err(ContractError::Unauthorized {});
+    }
+    state.closed_bidding = true;
+    STATE.save(deps.storage, &state)?;
+
+    let bank
+    Ok(Response::new().add_attribute("method", "close_bidding"))
 }
 
-pub fn try_increment(deps: DepsMut) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        state.count += 1;
-        Ok(state)
-    })?;
-
-    Ok(Response::new().add_attribute("method", "try_increment"))
+pub fn retract_bid(deps: DepsMut, info: MessageInfo, reciever: Option<Addr>) -> Result<Response, ContractError> {
+    let mut state = STATE.load(deps.storage)?;
+    
+    if state.highest_bid.sender != info.sender {
+        return Err(ContractError::Unauthorized {});
+    }
+    let mut current_bidder = BIDDER.load(deps.storage)?;
+    let mut current_bidder = Bidder {
+        sender: info.sender,
+        total_amount: Bid {
+            fund: coins(0, BID_DENOM),
+        },
+        transfer_addr: None,
+    };
+    BIDDER.save(deps.storage, &current_bidder)?;
+    STATE.save(deps.storage, &state)?;
+    Ok(Response::new().add_attribute("method", "retract_bid"))
 }
 
-pub fn try_reset(deps: DepsMut, info: MessageInfo, count: i32) -> Result<Response, ContractError> {
-    STATE.update(deps.storage, |mut state| -> Result<_, ContractError> {
-        if info.sender != state.owner {
-            return Err(ContractError::Unauthorized {});
-        }
-        state.count = count;
-        Ok(state)
-    })?;
-    Ok(Response::new().add_attribute("method", "reset"))
-}
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
@@ -112,113 +197,55 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
     }
 }
 
-fn query_count(deps: Deps) -> StdResult<CountResponse> {
-    let state = STATE.load(deps.storage)?;
-    Ok(CountResponse { count: state.count })
+#[cfg(test)]
+mod test {
+    use cosmwasm_std::{coin, coins, Addr, Empty};
+    use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor};
+
+   
+    use crate::{state::{Bidder, Bid}, msg::InstantiateMsg};
+    fn bidding_contract() -> Box<dyn Contract<Empty>> {
+        let contract = ContractWrapper::new(execute, instantiate, query);
+        Box::new(contract)
+    }
+
+    #[test]
+    fn submit_bid(){
+        let mut app: App<Empty> = AppBuilder::new().with_contract(bidding_contract()).build();
+        let owner = "owner";
+        let bidder = "bidder";
+        
+        let owner_addr = Addr::unchecked(owner);
+        let bidder_addr = Addr::unchecked(bidder);
+
+        let init_msg = InstantiateMsg {
+            higest_bid: Bidder {
+                sender: Addr::unchecked("bidder"),
+                total_amount: Bid {
+                    fund: coins(0, "atom"),
+                },
+                transfer_addr: None,
+            },
+        };
+
+        let init_exec = app
+            .update_contract(owner, init_msg, &[], &[])
+            .unwrap();
+
+        let bid_msg = ExecuteMsg::Bid {
+            sender: bidder_addr.clone(),
+            total_amount: Bid {
+                fund: coins(100, BID_DENOM),
+            },
+            transfer_addr: None,
+        };
+
+        let bid_exec = app
+            .update_contract(bidder, bid_msg, &[], &[])
+            .unwrap();
+        
+        let state = STATE.load(app.store()).unwrap();
+        assert_eq!(state.highest_bid.sender, bidder_addr);
+        assert_eq!(state.highest_bid.total_amount.fund, coins(100, BID_DENOM));
+    }
 }
-
-fn query_owner(deps: Deps) -> StdResult<OwnerResponse> {
-    let state = STATE.load(deps.storage)?;
-    Ok(OwnerResponse { owner: state.owner })
-}
-
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use cosmwasm_std::testing::{mock_dependencies, mock_env, mock_info};
-//     use cosmwasm_std::{coins, from_binary};
-
-//     #[test]
-//     fn proper_initialization() {
-//         let mut deps = mock_dependencies();
-
-//         let msg = InstantiateMsg { count: 17 };
-//         let info = mock_info("creator", &coins(1000, "earth"));
-
-//         // we can just call .unwrap() to assert this was a success
-//         let res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-//         assert_eq!(0, res.messages.len());
-
-//         // it worked, let's query the count state
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-//         let value: CountResponse = from_binary(&res).unwrap();
-//         assert_eq!(17, value.count);
-
-//         // it worked, let's query the owner state
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetOwner {}).unwrap();
-//         let value: OwnerResponse = from_binary(&res).unwrap();
-//         assert_eq!("creator", value.owner);
-//     }
-
-//     #[test]
-//     fn increment() {
-//         let mut deps = mock_dependencies();
-
-//         let msg = InstantiateMsg { count: 17 };
-//         let info = mock_info("creator", &coins(1000, "earth"));
-//         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-//         // anyone can increment counter
-//         let info = mock_info("anyone", &coins(2, "token"));
-//         let msg = ExecuteMsg::Increment {};
-//         let _res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-//         // should increase counter by 1
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-//         let value: CountResponse = from_binary(&res).unwrap();
-//         assert_eq!(18, value.count);
-//     }
-
-//     #[test]
-//     fn change_owner() {
-//         let mut deps = mock_dependencies();
-
-//         let msg = InstantiateMsg { count: 12 };
-//         let info = mock_info("creator", &coins(1000, "earth"));
-//         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-//         // owner should be creator
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetOwner {}).unwrap();
-//         let value: OwnerResponse = from_binary(&res).unwrap();
-//         assert_eq!("creator", value.owner);
-
-//         // contract creator can transfer contract to new owner
-//         let info = mock_info("creator", &coins(2, "token"));
-//         let address = Addr::unchecked("anyone");
-//         let msg = ExecuteMsg::NewOwner { new_owner: address };
-//         let _res = execute(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-//         // owner should be anyone
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetOwner {}).unwrap();
-//         let value: OwnerResponse = from_binary(&res).unwrap();
-//         assert_eq!("anyone", value.owner)
-//     }
-
-//     #[test]
-//     fn reset() {
-//         let mut deps = mock_dependencies();
-
-//         let msg = InstantiateMsg { count: 17 };
-//         let info = mock_info("creator", &coins(1000, "earth"));
-//         let _res = instantiate(deps.as_mut(), mock_env(), info, msg).unwrap();
-
-//         // unauthorized attempt to reset the counter by anyone
-//         let unauth_info = mock_info("anyone", &coins(2, "token"));
-//         let msg = ExecuteMsg::Reset { count: 5 };
-//         let res = execute(deps.as_mut(), mock_env(), unauth_info, msg);
-//         match res {
-//             Err(ContractError::Unauthorized {}) => {}
-//             _ => panic!("Must return unauthorized error"),
-//         }
-
-//         // only the original creator can reset the counter
-//         let auth_info = mock_info("creator", &coins(2, "token"));
-//         let msg = ExecuteMsg::Reset { count: 5 };
-//         let _res = execute(deps.as_mut(), mock_env(), auth_info, msg).unwrap();
-
-//         // should now be 5
-//         let res = query(deps.as_ref(), mock_env(), QueryMsg::GetCount {}).unwrap();
-//         let value: CountResponse = from_binary(&res).unwrap();
-//         assert_eq!(5, value.count);
-//     }
-// }

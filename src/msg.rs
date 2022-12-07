@@ -12,30 +12,47 @@ pub struct InstantiateMsg {
 #[cw_serde]
 pub enum ExecuteMsg {
     Bid {},
-    AddTranserAddr {},
-    Retract { new_owner: Addr },
-    CloseBidding { count: i32 },
+    CloseBidding {},
+    Retract { reciever: Option<Addr> },
 
 }
 
 #[cw_serde]
 #[derive(QueryResponses)]
 pub enum QueryMsg {
-    // GetCount returns the current count as a json-encoded number
+    // GetCount returns the,
     #[returns(HighestBidResponse)]
     GetHighestBid {},
     #[returns(HighestBidderResponse)]
     GetHighestBidder {},
+    #[returns(GetOwnerResponse)]
+    GetOwner {},
+    #[returns(GetIsBiddingClosedResponse)]
+    GetIsBiddingClosed {},
 }
+
+
 
 // We define a custom struct for each query response
 #[cw_serde]
 pub struct HighestBidResponse {
-    pub count: i32,
+    pub highest_bid: Bidder,
 }
 
 // We define a custom struct for each query response
 #[cw_serde]
 pub struct HighestBidderResponse {
+    pub highest_bidder: Bidder,
+}
+
+// We define a custom struct for each query response
+#[cw_serde]
+pub struct GetOwnerResponse {
     pub owner: Addr,
+}
+
+// We define a custom struct for each query response
+#[cw_serde]
+pub struct GetIsBiddingClosedResponse {
+    pub closed_bidding: bool,
 }

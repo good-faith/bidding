@@ -14,6 +14,26 @@ pub enum ContractError {
 
     #[error("Address Invalid")]
     AddressInvalid {},
+
+    #[error("Bid Insufficient")]
+    BidInsufficient {},
+
+    #[error("Invalid Amount")]
+    InvalidAmount {},
+
+    #[error("Invalid Denom")]
+    InvalidDenom {},
+
+    #[error("Bid Too Low")]
+    BidTooLow {},
+
+    #[error("Bidding Closed")]
+    BiddingClosed {},
+
+    #[error("Already Highest Bidder")]
+    AlreadyHighestBidder {},
+
+
     // Add any other custom errors you like here.
     // Look at https://docs.rs/thiserror/1.0.21/thiserror/ for details.
 }
