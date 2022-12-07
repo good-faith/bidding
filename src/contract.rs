@@ -76,7 +76,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
         state.highest_bid.sender = current_bidder.sender;
         state.highest_bid.transfer_addr = None;
 
-        let mut total_amount = state.highest_bid.total_amount.fund;
+        let mut total_amount = state.highest_bid.total_amount.fund[0].amount.u128();
         let mut commission = total_amount * COMMISSION / 100;
 ;       let mut amount = total_amount - commission;
 
@@ -98,7 +98,7 @@ pub fn submit_bid(deps: DepsMut, info: MessageInfo) -> Result<Response, Contract
 
         let bank_msg = BankMsg::Send {
             to_address: state.owner.to_string(),
-            amount: coins(commission.u128(), BID_DENOM),
+            amount: coins(commission, BID_DENOM),
         };
 
         return Ok(Response::new().add_attribute("method", "submit_bid"))
